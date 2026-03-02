@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Kaizen — Career Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',sans-serif;background:#F8F9FF;min-height:100vh}
+  .bounce{animation:bounce 1s infinite}
+  @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+  textarea,input{font-family:'Inter',sans-serif}
+  ::-webkit-scrollbar{width:4px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#e2e8f0;border-radius:2px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// ── Config ────────────────────────────────────────────────────────────────────
+const SUPABASE_URL = 'https://veluppifmbburmqixkmt.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlbHVwcGlmbWJidXJtcWl4a210Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0NTU0NTksImV4cCI6MjA4ODAzMTQ1OX0.cT6DYfxlyb-bTaoSJdCr4X6AebmmtVfKet_QXYhIdL8';
+const AI_PROXY = 'https://veluppifmbburmqixkmt.supabase.co/functions/v1/ai-proxy';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+const storage = {
+  get: async (key) => {
+    try {
+      const { data } = await sb.from('kaizen_storage').select('value').eq('key', key).single();
+      return data ? { value: data.value } : null;
+    } catch { return null; }
+  },
+  set: async (key, value) => {
+    try {
+      await sb.from('kaizen_storage').upsert({ key, value, updated_at: new Date().toISOString() });
+    } catch {}
+  }
+};
+
+// ── Plans ─────────────────────────────────────────────────────────────────────
+const PLANS = {
+  A: { id:'A', label:'A', title:'Dress Up CSA', emoji:'🏢', color:'#6366F1', light:'#EEF2FF',
+    pillars:[
+      {id:'a1',name:'Deliver Impact',desc:'Ship visible wins before SGS'},
+      {id:'a2',name:'Elevate Team',desc:'Develop & document your team'},
+      {id:'a3',name:'Executive Presence',desc:'Be seen at the right tables'},
+      {id:'a4',name:'Legacy Docs',desc:'Capture what you\'ve built'},
+    ]},
+  B: { id:'B', label:'B', title:'Network & Hunt', emoji:'🌐', color:'#0891B2', light:'#ECFEFF',
+    pillars:[
+      {id:'b1',name:'LinkedIn Presence',desc:'Thought leadership & visibility'},
+      {id:'b2',name:'Warm Outreach',desc:'Coffee chats & reconnections'},
+      {id:'b3',name:'Recruiter Pipeline',desc:'CTO/CEO/Board conversations'},
+      {id:'b4',name:'Industry Events',desc:'Show up where it counts'},
+    ]},
+  C: { id:'C', label:'C', title:'New Venture', emoji:'🚀', color:'#059669', light:'#ECFDF5',
+    pillars:[
+      {id:'c1',name:'Atman-AI',desc:'Enterprise OS — product & GTM'},
+      {id:'c2',name:'Build Together',desc:'Couples finance app'},
+      {id:'c3',name:'Investor Narrative',desc:'Deck, story, warm intros'},
+      {id:'c4',name:'Build in Public',desc:'Credibility & community'},
+    ]},
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const toDay = () => new Date().toISOString().slice(0,10);
+const toWeek = () => { const d=new Date(),day=d.getDay(),diff=d.getDate()-day+(day===0?-6:1); return new Date(new Date().setDate(diff)).toISOString().slice(0,10); };
+const last7 = () => Array.from({length:7}).map((_,i)=>{ const d=new Date(); d.setDate(d.getDate()-(6-i)); return d.toISOString().slice(0,10); });
+const dayLbl = (dk) => ['Su','Mo','Tu','We','Th','Fr','Sa'][new Date(dk+'T12:00:00').getDay()];
+const greet = () => { const h=new Date().getHours(); return h<12?'Morning':h<17?'Afternoon':'Evening'; };
+
+function useStorage(key, init) {
+  const [val, setVal] = useState(init);
+  useEffect(()=>{ (async()=>{ const r=await storage.get(key); if(r) try{ setVal(JSON.parse(r.value)); }catch{} })(); },[key]);
+  const save = async(v)=>{ setVal(v); await storage.set(key, JSON.stringify(v)); };
+  return [val, save];
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+const S = {
+  page: {minHeight:'100vh',background:'#F8F9FF',fontFamily:'Inter,sans-serif'},
+  card: {background:'white',borderRadius:24,border:'1px solid #F1F5F9',boxShadow:'0 1px 4px rgba(0,0,0,0.06)'},
+};
+
+// ── PIN ───────────────────────────────────────────────────────────────────────
+function PinLock({onUnlock}) {
+  const [stored, setStored] = useStorage('kaizen-pin-v2', null);
+  const [mode, setMode] = useState('check');
+  const [pin, setPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [err, setErr] = useState('');
+  const [shake, setShake] = useState(false);
+
+  useEffect(()=>{ if(stored===null) setMode('set'); },[stored]);
+
+  const current = mode==='check'?pin:mode==='set'?newPin:confirm;
+
+  const tap = (d) => {
+    const next = current+d;
+    if(mode==='check'){
+      setPin(next);
+      if(next.length===4){ if(next===stored){ onUnlock(); } else { setShake(true); setErr('Wrong PIN'); setTimeout(()=>{ setPin(''); setErr(''); setShake(false); },700); } }
+    } else if(mode==='set'){
+      setNewPin(next);
+      if(next.length===4) setMode('confirm');
+    } else {
+      setConfirm(next);
+      if(next.length===4){ if(next===newPin){ setStored(next); onUnlock(); } else { setErr("Don't match"); setTimeout(()=>{ setNewPin(''); setConfirm(''); setMode('set'); setErr(''); },700); } }
+    }
+  };
+
+  const del = () => {
+    if(mode==='check') setPin(p=>p.slice(0,-1));
+    else if(mode==='set') setNewPin(p=>p.slice(0,-1));
+    else setConfirm(p=>p.slice(0,-1));
+  };
+
+  return (
+    <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#EEF2FF,#F8F9FF)',display:'flex',alignItems:'center',justifyContent:'center',padding:24}}>
+      <div style={{width:'100%',maxWidth:320}}>
+        <div style={{textAlign:'center',marginBottom:40}}>
+          <div style={{fontSize:48,marginBottom:16}}>⚡</div>
+          <h1 style={{fontSize:24,fontWeight:900,color:'#1E293B',marginBottom:4}}>{mode==='check'?'Welcome back, Anand':mode==='set'?'Set your PIN':'Confirm PIN'}</h1>
+          <p style={{fontSize:14,color:'#94A3B8'}}>{mode==='check'?'Enter your 4-digit PIN':mode==='set'?'Choose a PIN to protect your tracker':'Re-enter your PIN'}</p>
+          {err && <p style={{color:'#EF4444',fontSize:13,marginTop:8,fontWeight:600}}>{err}</p>}
+        </div>
+        <div style={{display:'flex',justifyContent:'center',gap:16,marginBottom:40,transform:shake?'translateX(8px)':'none',transition:'transform 0.1s'}}>
+          {[0,1,2,3].map(i=>(
+            <div key={i} style={{width:16,height:16,borderRadius:'50%',border:'2px solid #6366F1',background:i<current.length?'#6366F1':'transparent',transition:'background 0.15s'}}/>
+          ))}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+          {[1,2,3,4,5,6,7,8,9,'',0,'⌫'].map((k,i)=>(
+            <button key={i} onClick={()=>k==='⌫'?del():k!==''&&tap(String(k))} disabled={k===''}
+              style={{height:64,borderRadius:20,border:'none',fontSize:20,fontWeight:700,cursor:k===''?'default':'pointer',background:k===''?'transparent':k==='⌫'?'#F1F5F9':'white',color:k==='⌫'?'#94A3B8':'#1E293B',boxShadow:k===''?'none':'0 1px 3px rgba(0,0,0,0.08)',transition:'transform 0.1s,opacity 0.1s'}}
+              onMouseDown={e=>{if(k!=='')e.currentTarget.style.transform='scale(0.94)'}}
+              onMouseUp={e=>{if(k!=='')e.currentTarget.style.transform='scale(1)'}}
+            >{k}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Chain ─────────────────────────────────────────────────────────────────────
+function Chain({planId, pillarId, pulses, color}) {
+  const days = last7();
+  return (
+    <div style={{display:'flex',gap:6}}>
+      {days.map(dk=>{
+        const done = !!pulses[`${planId}-${pillarId}-${dk}`];
+        const isToday = dk===toDay();
+        return (
+          <div key={dk} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+            <div style={{width:28,height:28,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,background:done?color:isToday?`${color}20`:'#F1F5F9',color:done?'white':isToday?color:'#CBD5E1',border:isToday?`1.5px solid ${color}40`:'none',transition:'all 0.2s'}}>
+              {done?'✓':''}
+            </div>
+            <span style={{fontSize:10,color:isToday?color:'#CBD5E1',fontWeight:isToday?700:400}}>{dayLbl(dk)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Reflect Modal ─────────────────────────────────────────────────────────────
+function ReflectModal({type, plan, planId, dailyR, setDailyR, weeklyR, setWeeklyR, onClose}) {
+  const dk=toDay(), wk=toWeek();
+  const isDaily=type==='daily';
+  const key=isDaily?`${planId}-${dk}`:`${planId}-${wk}`;
+  const [text,setText]=useState(isDaily?(dailyR[key]||''):(weeklyR[key]||''));
+  const [aiResp,setAiResp]=useState('');
+  const [loading,setLoading]=useState(false);
+
+  const weekDigest = !isDaily ? last7().map(d=>({d,t:dailyR[`${planId}-${d}`]})).filter(x=>x.t) : [];
+
+  const save=()=>{ if(!text.trim()) return; if(isDaily) setDailyR(p=>({...p,[key]:text.trim()})); else setWeeklyR(p=>({...p,[key]:text.trim()})); onClose(); };
+
+  const saveAndCoach=async()=>{
+    if(!text.trim()) return;
+    if(isDaily) setDailyR(p=>({...p,[key]:text.trim()})); else setWeeklyR(p=>({...p,[key]:text.trim()}));
+    setLoading(true);
+    try {
+      const prompt = isDaily
+        ? `Anand (VP Digital Transformation, Tamil South Indian, spiritual Shivoham, navigating CSA acquisition + building AI ventures) daily reflection for "${plan.title}": "${text}". Warm, specific 2-sentence coaching response + one energizing thought for tomorrow.`
+        : `Anand's weekly reflection for "${plan.title}": "${text}". Week: ${weekDigest.map(x=>x.t).join(' | ')}. 2-3 sentence insight, spot a pattern, give one concrete 1% move.`;
+      const res = await fetch(AI_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:300,messages:[{role:'user',content:prompt}]})});
+      const data = await res.json();
+      setAiResp(data.content?.find(b=>b.type==='text')?.text||'Keep going. One day at a time.');
+    } catch { setAiResp('Saved. Keep building.'); }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{position:'fixed',inset:0,zIndex:50,display:'flex',alignItems:'flex-end',justifyContent:'center'}}>
+      <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.2)',backdropFilter:'blur(4px)'}} onClick={onClose}/>
+      <div style={{position:'relative',width:'100%',maxWidth:480,background:'white',borderRadius:'24px 24px 0 0',padding:24,paddingBottom:32,boxShadow:'0 -4px 40px rgba(0,0,0,0.12)'}}>
+        <div style={{width:40,height:4,background:'#E2E8F0',borderRadius:2,margin:'0 auto 20px'}}/>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+          <div style={{width:40,height:40,borderRadius:16,background:plan.light,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18}}>{isDaily?'🌙':'📅'}</div>
+          <div>
+            <p style={{fontWeight:700,color:'#1E293B',fontSize:14}}>{isDaily?'Daily Reflection':'Weekly Reflection'}</p>
+            <p style={{fontSize:12,color:'#94A3B8'}}>{plan.title} · {isDaily?new Date().toLocaleDateString('en-CA',{weekday:'long',month:'short',day:'numeric'}):`Week of ${wk}`}</p>
+          </div>
+        </div>
+        {!isDaily && weekDigest.length>0 && (
+          <div style={{marginBottom:16,background:plan.light,borderRadius:16,padding:12,maxHeight:112,overflowY:'auto'}}>
+            <p style={{fontSize:11,fontWeight:700,color:'#64748B',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:8}}>This week</p>
+            {weekDigest.map(({d,t})=>(
+              <p key={d} style={{fontSize:12,color:'#475569',marginBottom:4}}><span style={{fontWeight:600,color:'#94A3B8'}}>{dayLbl(d+' ')} </span>{t}</p>
+            ))}
+          </div>
+        )}
+        <p style={{fontSize:13,color:'#64748B',fontStyle:'italic',marginBottom:12}}>{isDaily?'"What\'s your win today — and what would you do differently?"':'"What shifted this week? What\'s your 1% move?"'}</p>
+        <textarea value={text} onChange={e=>setText(e.target.value)} rows={4} autoFocus
+          placeholder={isDaily?'Even one honest line is enough…':'Look for patterns across the week…'}
+          style={{width:'100%',background:'#F8FAFC',border:'1px solid #E2E8F0',borderRadius:16,padding:'12px 16px',fontSize:14,color:'#334155',outline:'none',resize:'none',marginBottom:12}}/>
+        {aiResp && (
+          <div style={{background:plan.light,border:`1px solid ${plan.color}22`,borderRadius:16,padding:16,marginBottom:12}}>
+            <p style={{fontSize:11,fontWeight:700,color:plan.color,marginBottom:6}}>✦ Your Coach</p>
+            <p style={{fontSize:13,color:'#334155',lineHeight:1.6}}>{aiResp}</p>
+          </div>
+        )}
+        {loading && <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:12,paddingLeft:4}}>{[0,1,2].map(i=><div key={i} className="bounce" style={{width:6,height:6,borderRadius:'50%',background:'#CBD5E1',animationDelay:`${i*0.15}s`}}/>)}<span style={{fontSize:12,color:'#94A3B8'}}>Coach is reading…</span></div>}
+        <div style={{display:'flex',gap:10}}>
+          <button onClick={save} style={{flex:1,padding:'12px 0',borderRadius:16,border:'none',background:plan.color,color:'white',fontWeight:700,fontSize:14,cursor:'pointer'}}>Save</button>
+          <button onClick={saveAndCoach} disabled={loading||!text.trim()} style={{flex:1,padding:'12px 0',borderRadius:16,border:`2px solid ${plan.color}`,background:'white',color:plan.color,fontWeight:700,fontSize:14,cursor:'pointer',opacity:loading||!text.trim()?0.4:1}}>Save + Coach ✦</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── AI Chat ───────────────────────────────────────────────────────────────────
+function AIChat({plan, planId, pulses, dailyR, weeklyR, onClose}) {
+  const [msgs,setMsgs]=useState([]);
+  const [input,setInput]=useState('');
+  const [loading,setLoading]=useState(false);
+  const bottomRef=useRef(null);
+  const dk=toDay(), wk=toWeek();
+
+  useEffect(()=>{ prime(); },[]);
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:'smooth'}); },[msgs]);
+
+  const ctx=()=>{
+    const done=plan.pillars.filter(p=>pulses[`${planId}-${p.id}-${dk}`]).map(p=>p.name).join(', ')||'none yet';
+    const todayLog=dailyR[`${planId}-${dk}`]||'not written';
+    const weekLog=weeklyR[`${planId}-${wk}`]||'not written';
+    const hist=last7().map(d=>dailyR[`${planId}-${d}`]).filter(Boolean).join(' | ');
+    return `You are a warm, sharp, deeply personal career coach for Anand — VP Digital Transformation at CSA Group, Toronto. Tamil South Indian, spiritual (Shivoham), father rebuilding life with purpose. Three career plans: A=Dress Up CSA (SGS acquisition ~Sep 2026), B=Network & Hunt (CTO/CEO/Board), C=New Venture (Atman-AI + Build Together). Now focused on: ${plan.title}. Today's completed pillars: ${done}. Today's reflection: ${todayLog}. Weekly: ${weekLog}. Last 7 days: ${hist||'none'}. Be concise, warm, specific. Never generic. One powerful question when right. Max 3 short paragraphs.`;
+  };
+
+  const prime=async()=>{
+    setLoading(true);
+    try {
+      const res=await fetch(AI_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:500,system:ctx(),messages:[{role:'user',content:`Brief warm opening check-in for Anand on ${plan.title} today. Personal, specific, one question.`}]})});
+      const data=await res.json();
+      setMsgs([{role:'ai',text:data.content?.find(b=>b.type==='text')?.text||'Hey Anand — what\'s on your mind?'}]);
+    } catch { setMsgs([{role:'ai',text:`Hey Anand — ready to talk ${plan.title}?`}]); }
+    setLoading(false);
+  };
+
+  const send=async()=>{
+    if(!input.trim()||loading) return;
+    const t=input.trim(); setInput('');
+    const next=[...msgs,{role:'user',text:t}];
+    setMsgs(next); setLoading(true);
+    try {
+      const res=await fetch(AI_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:500,system:ctx(),messages:next.map(m=>({role:m.role==='ai'?'assistant':'user',content:m.text}))})});
+      const data=await res.json();
+      setMsgs(p=>[...p,{role:'ai',text:data.content?.find(b=>b.type==='text')?.text||'Tell me more.'}]);
+    } catch { setMsgs(p=>[...p,{role:'ai',text:'I\'m here. What\'s on your mind?'}]); }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{position:'fixed',inset:0,zIndex:50,display:'flex',flexDirection:'column',background:'white'}}>
+      <div style={{padding:'20px 20px 16px',borderBottom:'1px solid #F1F5F9',background:plan.light,display:'flex',alignItems:'center',gap:12}}>
+        <button onClick={onClose} style={{width:36,height:36,borderRadius:'50%',border:'none',background:'rgba(255,255,255,0.7)',cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center'}}>←</button>
+        <div style={{width:34,height:34,borderRadius:'50%',background:plan.color,display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontWeight:700}}>✦</div>
+        <div style={{flex:1}}>
+          <p style={{fontWeight:700,color:'#1E293B',fontSize:14}}>AI Coach</p>
+          <p style={{fontSize:12,color:'#64748B'}}>{plan.title}</p>
+        </div>
+        <button onClick={prime} style={{fontSize:12,padding:'6px 12px',borderRadius:20,border:'1px solid #E2E8F0',background:'white',color:'#64748B',cursor:'pointer'}}>↺ Restart</button>
+      </div>
+      <div style={{flex:1,overflowY:'auto',padding:'16px',display:'flex',flexDirection:'column',gap:12,background:'#F8F9FF'}}>
+        {msgs.map((m,i)=>(
+          <div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
+            <div style={{maxWidth:'82%',padding:'12px 16px',borderRadius:20,fontSize:14,lineHeight:1.6,whiteSpace:'pre-wrap',background:m.role==='user'?plan.color:'white',color:m.role==='user'?'white':'#334155',boxShadow:m.role==='user'?'none':'0 1px 3px rgba(0,0,0,0.06)'}}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div style={{display:'flex',justifyContent:'flex-start'}}>
+            <div style={{background:'white',padding:'12px 16px',borderRadius:20,boxShadow:'0 1px 3px rgba(0,0,0,0.06)',display:'flex',gap:4}}>
+              {[0,1,2].map(i=><div key={i} className="bounce" style={{width:6,height:6,borderRadius:'50%',background:'#CBD5E1',animationDelay:`${i*0.15}s`}}/>)}
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef}/>
+      </div>
+      <div style={{padding:'12px 16px 24px',background:'white',borderTop:'1px solid #F1F5F9'}}>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&send()}
+            placeholder="Ask or share anything…"
+            style={{flex:1,background:'#F1F5F9',border:'none',borderRadius:20,padding:'12px 18px',fontSize:14,color:'#334155',outline:'none'}}/>
+          <button onClick={send} disabled={loading||!input.trim()}
+            style={{width:44,height:44,borderRadius:'50%',border:'none',background:plan.color,color:'white',fontSize:18,cursor:'pointer',opacity:loading||!input.trim()?0.4:1,display:'flex',alignItems:'center',justifyContent:'center'}}>↑</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+function App() {
+  const [unlocked,setUnlocked]=useState(false);
+  const [activePlan,setActivePlan]=useState('A');
+  const [showAI,setShowAI]=useState(false);
+  const [reflect,setReflect]=useState(null);
+  const [pulses,setPulses]=useStorage('k4-pulses',{});
+  const [dailyR,setDailyR]=useStorage('k4-daily',{});
+  const [weeklyR,setWeeklyR]=useStorage('k4-weekly',{});
+
+  const dk=toDay(), wk=toWeek();
+  const plan=PLANS[activePlan];
+
+  const toggle=(pillarId)=>setPulses(p=>({...p,[`${activePlan}-${pillarId}-${dk}`]:!p[`${activePlan}-${pillarId}-${dk}`]}));
+  const streak=(pillarId)=>{ let s=0; for(let i=0;i<60;i++){ const d=new Date(); d.setDate(d.getDate()-i); if(pulses[`${activePlan}-${pillarId}-${d.toISOString().slice(0,10)}`]) s++; else break; } return s; };
+
+  const todayDone=plan.pillars.filter(p=>pulses[`${activePlan}-${p.id}-${dk}`]).length;
+  const totalDone=Object.entries(PLANS).reduce((a,[id,pl])=>a+pl.pillars.filter(pi=>pulses[`${id}-${pi.id}-${dk}`]).length,0);
+  const totalPillars=Object.values(PLANS).reduce((a,p)=>a+p.pillars.length,0);
+  const todayDailyDone=!!dailyR[`${activePlan}-${dk}`];
+  const thisWeekDone=!!weeklyR[`${activePlan}-${wk}`];
+  const pct=Math.round((todayDone/plan.pillars.length)*100);
+
+  if(!unlocked) return <PinLock onUnlock={()=>setUnlocked(true)}/>;
+  if(showAI) return <AIChat plan={plan} planId={activePlan} pulses={pulses} dailyR={dailyR} weeklyR={weeklyR} onClose={()=>setShowAI(false)}/>;
+
+  return (
+    <div style={S.page}>
+      {/* Header */}
+      <div style={{padding:'32px 20px 16px'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div>
+            <p style={{fontSize:13,color:'#94A3B8'}}>{greet()}, Anand 👋</p>
+            <h1 style={{fontSize:26,fontWeight:900,color:'#0F172A',letterSpacing:'-0.5px'}}>Kaizen</h1>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:12}}>
+            <div style={{textAlign:'right'}}>
+              <p style={{fontSize:11,color:'#94A3B8'}}>Today</p>
+              <p style={{fontSize:20,fontWeight:900,color:'#0F172A'}}>{totalDone}<span style={{color:'#CBD5E1',fontWeight:400,fontSize:14}}>/{totalPillars}</span></p>
+            </div>
+            <button onClick={()=>setShowAI(true)}
+              style={{width:44,height:44,borderRadius:16,border:'none',background:plan.color,color:'white',fontSize:18,cursor:'pointer',boxShadow:`0 4px 12px ${plan.color}44`,display:'flex',alignItems:'center',justifyContent:'center'}}>✦</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Plan switcher */}
+      <div style={{padding:'0 20px 20px'}}>
+        <div style={{display:'flex',gap:8,padding:6,background:'white',borderRadius:20,boxShadow:'0 1px 4px rgba(0,0,0,0.06)',border:'1px solid #F1F5F9'}}>
+          {Object.values(PLANS).map(p=>{
+            const done=p.pillars.filter(pi=>pulses[`${p.id}-${pi.id}-${dk}`]).length;
+            const active=activePlan===p.id;
+            return (
+              <button key={p.id} onClick={()=>setActivePlan(p.id)}
+                style={{flex:1,padding:'10px 4px',borderRadius:14,border:'none',background:active?p.color:'transparent',cursor:'pointer',transition:'all 0.2s',display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+                <span style={{fontSize:18}}>{p.emoji}</span>
+                <span style={{fontSize:11,fontWeight:700,color:active?'white':'#94A3B8'}}>Plan {p.label}</span>
+                <span style={{fontSize:10,color:active?'rgba(255,255,255,0.7)':'#CBD5E1'}}>{done}/{p.pillars.length}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Plan header card */}
+      <div style={{padding:'0 20px 16px'}}>
+        <div style={{borderRadius:24,padding:20,background:plan.light}}>
+          <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:16}}>
+            <div>
+              <p style={{fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.08em',color:plan.color}}>Plan {plan.label}</p>
+              <h2 style={{fontSize:22,fontWeight:900,color:'#0F172A',marginTop:2}}>{plan.title}</h2>
+            </div>
+            {/* Ring */}
+            <svg width={60} height={60} viewBox="0 0 36 36" style={{transform:'rotate(-90deg)',flexShrink:0}}>
+              <circle cx={18} cy={18} r={15.9} fill="none" stroke="#E2E8F0" strokeWidth={3}/>
+              <circle cx={18} cy={18} r={15.9} fill="none" stroke={plan.color} strokeWidth={3}
+                strokeDasharray={`${pct} 100`} strokeLinecap="round" style={{transition:'stroke-dasharray 0.5s'}}/>
+              <text x={18} y={18} textAnchor="middle" dominantBaseline="middle" style={{transform:'rotate(90deg)',transformOrigin:'18px 18px',fontSize:7,fontWeight:900,fill:plan.color}}>{pct}%</text>
+            </svg>
+          </div>
+          {/* Reflection pills */}
+          <div style={{display:'flex',gap:8}}>
+            {[['daily','🌙','Daily',todayDailyDone],['weekly','📅','Weekly',thisWeekDone]].map(([type,emoji,label,done])=>(
+              <button key={type} onClick={()=>setReflect(type)}
+                style={{flex:1,display:'flex',alignItems:'center',gap:8,padding:'10px 14px',borderRadius:14,border:`1px solid ${done?plan.color:'#E2E8F0'}`,background:done?plan.color:'white',cursor:'pointer',transition:'all 0.2s'}}>
+                <span style={{fontSize:16}}>{emoji}</span>
+                <span style={{fontSize:12,fontWeight:600,color:done?'white':'#64748B'}}>{label}</span>
+                {done && <span style={{marginLeft:'auto',color:'white',fontSize:12}}>✓</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Pillars */}
+      <div style={{padding:'0 20px 40px',display:'flex',flexDirection:'column',gap:12}}>
+        {plan.pillars.map(pillar=>{
+          const done=!!pulses[`${activePlan}-${pillar.id}-${dk}`];
+          const s=streak(pillar.id);
+          return (
+            <div key={pillar.id} style={{...S.card,padding:20,background:done?'#FAFBFF':'white',transition:'all 0.2s'}}>
+              <div style={{display:'flex',alignItems:'flex-start',gap:12,marginBottom:16}}>
+                <button onClick={()=>toggle(pillar.id)}
+                  style={{width:26,height:26,borderRadius:'50%',border:`2px solid ${done?plan.color:'#E2E8F0'}`,background:done?plan.color:'white',flexShrink:0,marginTop:2,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',transition:'all 0.2s'}}>
+                  {done && <span style={{color:'white',fontSize:12,fontWeight:900}}>✓</span>}
+                </button>
+                <div style={{flex:1}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:2}}>
+                    <p style={{fontWeight:700,fontSize:14,color:done?'#94A3B8':'#1E293B',textDecoration:done?'line-through':'none'}}>{pillar.name}</p>
+                    {s>0 && <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,fontWeight:700,background:`${plan.color}15`,color:plan.color}}>🔥 {s}d</span>}
+                  </div>
+                  <p style={{fontSize:12,color:'#94A3B8'}}>{pillar.desc}</p>
+                </div>
+              </div>
+              <Chain planId={activePlan} pillarId={pillar.id} pulses={pulses} color={plan.color}/>
+            </div>
+          );
+        })}
+      </div>
+
+      {reflect && <ReflectModal type={reflect} plan={plan} planId={activePlan} dailyR={dailyR} setDailyR={setDailyR} weeklyR={weeklyR} setWeeklyR={setWeeklyR} onClose={()=>setReflect(null)}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
